@@ -3,6 +3,17 @@ import express from "express";
 const app = express();
 app.disable("x-powered-by");
 
+// CORS para que el dashboard alojado en Cloudflare Pages pueda leer
+// /status, /health, /binance-test y /btc directamente desde Render.
+app.use((req,res,next)=>{
+  res.setHeader("Access-Control-Allow-Origin","*");
+  res.setHeader("Access-Control-Allow-Methods","GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers","Content-Type");
+  res.setHeader("Cache-Control","no-store");
+  if(req.method==="OPTIONS") return res.sendStatus(204);
+  next();
+});
+
 const PORT = process.env.PORT || 10000;
 const WORKER_URL = process.env.NOVA_WORKER_URL || "https://nova-trader-engine.cos-tortugasopen.workers.dev";
 const WATCHER_TOKEN = process.env.NOVA_WATCHER_TOKEN || "";
@@ -34,7 +45,7 @@ async function bget(path){
   const res = await fetch(BINANCE + path, {
     headers: {
       "Accept":"application/json",
-      "User-Agent":"NOVA-RENDER-WATCHER/1.0"
+      "User-Agent":"NOVA-RENDER-WATCHER/1.2"
     }
   });
 
@@ -273,10 +284,16 @@ async function runCycle(){
       analyzed:signals.length,
       entries:result.entries||[],
       exits:result.exits||[],
-      top:signals.slice(0,5).map(s=>({
+      top:signals.slice(0,8).map(s=>({
         symbol:s.symbol,
+        price:s.price,
         score:s.breakoutScore,
-        state:s.state
+        state:s.state,
+        move1m:s.move1m,
+        move5m:s.move5m,
+        move15m:s.move15m,
+        volumeRatio:s.volumeRatio,
+        reasons:s.reasons||[]
       }))
     };
 
@@ -314,7 +331,7 @@ app.get("/", (_req,res)=>{
   res.json({
     ok:true,
     service:"NOVA RENDER WATCHER",
-    version:"1.0.0",
+    version:"1.2.0",
     realTrading:false,
     intervalSeconds:INTERVAL_MS/1000,
     worker:WORKER_URL,
@@ -322,7 +339,7 @@ app.get("/", (_req,res)=>{
     tokenConfigured:!!WATCHER_TOKEN,
     running,
     lastCycle,
-    routes:["/health","/status","/binance-test","/btc","/run-now"]
+    routes:["/health","/status","/market","/binance-test","/btc","/run-now"]
   });
 });
 
@@ -330,7 +347,7 @@ app.get("/health",(_req,res)=>{
   res.json({
     ok:true,
     service:"NOVA RENDER WATCHER",
-    version:"1.0.0",
+    version:"1.2.0",
     realTrading:false,
     intervalSeconds:50,
     tokenConfigured:!!WATCHER_TOKEN,
@@ -348,11 +365,21 @@ app.get("/status",(_req,res)=>{
   });
 });
 
+app.get("/market",(_req,res)=>{
+  res.json({
+    ok:true,
+    source:"RENDER_50S",
+    generatedAt:lastCycle?.finishedAt||null,
+    running,
+    top:Array.isArray(lastCycle?.top)?lastCycle.top:[]
+  });
+});
+
 app.get("/binance-test",async(_req,res)=>{
   const started=Date.now();
   try{
     const r=await fetch(BINANCE+"/api/v3/ping",{
-      headers:{"Accept":"application/json","User-Agent":"NOVA-RENDER-WATCHER/1.0"}
+      headers:{"Accept":"application/json","User-Agent":"NOVA-RENDER-WATCHER/1.2"}
     });
     const body=await r.text();
     res.status(r.status).json({
